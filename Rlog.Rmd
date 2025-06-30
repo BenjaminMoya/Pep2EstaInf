@@ -1,0 +1,229 @@
+---
+title: "RLOG"
+output: html_document
+date: "2025-06-09"
+---
+
+```{r}
+library(car)
+library(titanic)
+
+# Cargamos los datos
+data(titanic_train)
+
+# Seleccionamos una muestra de 300 observaciones sin datos vacios ni nulos
+titanic_sample <- na.omit(titanic_train)
+titanic_sample <- titanic_sample[sample(nrow(titanic_sample), 300), ]
+```
+
+Seleccionamos el 70% de los datos para entrenamiento y el 30% restante para testeo.
+```{r}
+# Dividir los datos en entrenamiento y prueba
+set.seed(123)  # Para reproducibilidad
+train_indices <- sample(1:nrow(titanic_sample), size = 0.7 * nrow(titanic_sample))
+titanic_train <- titanic_sample[train_indices, ]
+titanic_test <- titanic_sample[-train_indices, ]
+```
+
+La variable de respuesta es Survived.De esta manera debemos construir un modelo de regresion logistica con 3 o 4 predictores para esta variable. 
+
+Elegiremos los predictores mediante regresion paso a paso hacia adelante, por lo que empezamos eligiendo un modelo nulo y un predictor que creamos que pueda ser relevante. En esta ocasion escogemos la edad, ya que es una variable que puede influir en la supervivencia de los pasajeros, debido a que los botes salvavidas priorizaban ciertos rangos etarios.
+
+```{r}
+# Modelo completo
+model_full <- glm(Survived ~ Age + Pclass + Sex + SibSp + Parch + PassengerId + Fare, family = binomial(link="logit"), data = titanic_train)
+summary(null_model)
+
+# Modelo nulo
+model_null <- glm(Survived ~ 1, family = binomial(link="logit"), data = titanic_train)
+summary(model_null)
+```
+Como vemos hay variables que no son significativas para el modelo, por lo que se espera que sean desechadas.
+
+```{r}
+# Regresión paso a paso hacia adelante 1
+print(add1(model_null,scope=model_full))
+
+# Actualizamos el modelo nulo con la variable mas significativa
+model_1 <- update(model_null, . ~ . + Age)
+summary(model_1)
+
+# Regresión paso a paso hacia adelante 2
+print(add1(model_1,scope=model_full))
+
+# Actualizamos el modelo 1 con la variable mas significativa
+model_2 <- update(model_1, . ~ . + Pclass)
+summary(model_2)
+
+# Regresión paso a paso hacia adelante 3
+print(add1(model_2,scope=model_full))
+
+# Actualizamos el modelo 2 con la variable mas significativa
+model_3 <- update(model_2, . ~ . + Sex)
+summary(model_3)
+```
+Ya con estas variables puede ser suficiente pero revisaremos una ultima para confirmar si el modelo mejora con esta.
+```{r}
+# Regresión paso a paso hacia adelante 4
+print(add1(model_3,scope=model_full))
+
+# Actualizamos el modelo 3 con la variable mas significativa
+model_4 <- update(model_3, . ~ . + SibSp)
+summary(model_4)
+```
+
+Como la variable SibSp resulta significativa para el modelo, entonces la conservamos en el modelo final.
+
+Luego de conseguido el modelo, evaluaremos su confiabilidad mediante 6 condiciones:
+1) Debe existir una relacion lineal entre los predictores y la respuesta transformada: Esto lo podemos verificar mediante la funcion de crPlots() de los residuos parciales.
+
+```{r}
+# Evaluamos la condicion de linealidad
+crPlots(model_4)
+```
+
+Como vemos en el grafico, la variable Sex es la que mas se aleja de la linealidad, por lo que puede ser necesario transformar esta variable para que se vea un modelo completo.
+
+2) Los residuos deben ser independientes entre si: Esto lo verificamos mediante el test de Durbin Watson, que nos indica si hay autocorrelacion entre los residuos. 
+```{r}
+# Aplicamos el test al modelo
+durbinWatsonTest(model_4)
+```
+Como el p valor es mayor a 0.05, no hay autocorrelacion entre los residuos, por lo que se cumple la condicion.
+
+3) Multicolinealidad entre los predictores: Esto lo verificamos mediante el VIF, que nos indica si hay colinealidad entre los predictores.
+```{r}
+# Aplicamos el VIF al modelo
+vif(model_4)
+```
+Como los 4 precitores poseen un Vif menor a 5, e incluso menor a 2, no hay colinealidad entre los predictores, por lo que se cumple la condicion, ya que estan dentro de los umbrales aceptables.
+
+4) Numero de observaciones: Como tenemos 4 predictores se espera tener al menos 15 observaciones por predictor, por lo que con 210 observaciones tenemos mas que suficiente para cumplir la condicion.
+
+5) Separacion perfecta: Como no hubieron advertencias de convergencia en el modelo, esto no sucede.
+
+6) Las estimaciones de los coeficientes del modelo no estan dominadas por casos influyentes: Esto lo verificamos mediante el influencePlot(), que nos indica si hay casos influyentes en el modelo y sus estadisticos.
+
+```{r}
+# Aplicamos el influencePlot al modelo
+influencePlot(model_4)
+```
+Como vemos, el dato 69 es el unico que se aleja del resto de los datos, pero no es un caso influyente, ya que la distancia de Cook es menor a 1, por lo que no afecta al modelo. De esta manera no debemos eliminar ningun dato, y las condicion se cumple.
+
+Por ultimo evaluamos el modelo con los datos de testeo, para ver si se comporta bien con datos que no ha visto antes.
+
+```{r}
+library(pROC)
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(tidyr)
+library(caret)
+# Evaluacion de calidad predictiva
+probs <- fitted(model_4)
+
+# Grafico ROC y AUC obtenido
+ROC_ent <- roc(titanic_train[["Survived"]], probs,
+               levels = c("Yes", "No"), direction = ">")
+g_ROC_ent <- ggroc(ROC_ent, color = "steelblue")
+g_ROC_ent <- g_ROC_ent + geom_abline (intercept = 1, slope = 1, color = "steelblue1", linetype = "dashed")
+g_ROC_ent <- g_ROC_ent + xlab("Especificidad") + ylab("Sensibilidad")
+texto_ent <- sprintf ("AUC = %.2f", ROC_ent[["auc"]])
+g_ROC_ent <- g_ROC_ent + annotate("text", x = 0.3, y = 0.3, label = texto_ent)
+g_ROC_ent <- g_ROC_ent + theme_pubr()
+print (g_ROC_ent)
+
+# Obtenemos las predicciones
+umbral <- 0.9
+preds_ent <- sapply(probs,
+                    function(p) ifelse(p >= umbral, "“No", "Yes"))
+preds_ent <- factor(preds_ent, levels = c("Yes", "No"))
+
+# Obtener y mostrar estadisticas de clasificacion en datos de entrenamiento
+mat_conf_ent <- confusionMatrix(preds_ent, titanic_train[["Survived"]],
+                                positive = "No")
+cat("\n\nEvaluacién de la calidad predictora (cjto. de entrenamiento):\n") 
+cat ("------------------------------------------------------------ \n")
+print (mat_conf_ent[["table"]])
+cat ("\n")
+cat (sprintf(" Exactitud: %.3f\n", mat_conf_ent[["overall"]]["Accuracy"]))
+cat (sprintf(" Sensibilidad: %.3f\n", mat_conf_ent[["byClass"]]["Sensitivity"]))
+cat (sprintf ("Especificidad: %.3f\n", mat_conf_ent[["byClass"]]["Specificity"]))
+```
+Con un umbral del 0.9, considerando que un falso positivo en esta situacion no es muy etico,la curva ROC esta por encima de la diagonal y el AUC es de 0.87, entonces el modelo esta realizando una prediccion mejor que un clasificador aleatorio. Asi mismo se obtuvo una exactitud de 0.163, Sesibilidad de 0 y Especificidad de 1, lo que muestra que el modelo aun necesita ser ajustado en los formatos de sus predictores, debido a que no son datos realistas, ya que con sensibilidad es 0, indica que el modelo no esta prediciendo correctamente los casos positivos.
+
+Procedemos a validar la prediccion con los datos de testeo, para ver si el modelo se comporta bien con datos que no ha visto antes. 
+
+```{r}
+# Evaluar el modelo con el conjunto de prueba
+probs_pru <- predict(model_4, titanic_test, type = "response")
+
+# Graficar curva ROC, indicando AUC obtenido
+ROC_pru <- roc(titanic_test[["Survived"]], probs_pru,levels = c("Yes", "No"), direction = ">")
+g_ROC_pru <- ggroc(ROC_pru, color = "steelblue")
+g_ROC_pru <- g_ROC_pru + geom_abline(intercept = 1, slope = 1,colour = "steelblue1", linetype = "dashed")
+g_ROC_pru <- g_ROC_pru + xlab("Especificidad") + ylab("Sensibilidad")
+texto_pru <- sprintf("AUC = %.2f", ROC_pru[["auc"]])
+g_ROC_pru <- g_ROC_pru + annotate("text", x = 0.3, y = 0.3, label = texto_pru)
+g_ROC_pru <- g_ROC_pru + theme_pubr()
+print (g_ROC_pru)
+
+# Obtener las predicciones con el mismo umbral)
+preds_pru <- sapply(probs_pru,function(p) ifelse(p >= umbral, "“No", "Yes"))
+preds_pru <- factor(preds_pru, levels = c("Yes", "“No"))
+
+# Obtener y mostrar estadisticas de clasificacién en datos de prueba
+mat_conf_pru <- confusionMatrix(preds_pru, titanic_test[["Survived"]],positive = "No")
+cat ("\n\nEvaluacion del modelo (cjto. de prueba) :\n")
+cat ("--------------------------------------- \n")
+print (mat_conf_pru[["table"]])cat ("\n")
+cat (sprintf (" Exactitud: %.3f\n", mat_conf_pru[["overall"]]["Accuracy"]))
+cat(sprintf(" Sensibilidad: %.3f\n", mat_conf_pru[["byClass"]]["Sensitivity"]))
+cat (sprintf("Especificidad: %.3f\n", mat_conf_pru[["byClass"]]["Specificity"]))
+```
+Con un umbral del 0.9 y los datos de prueba, obtenemos que la curva ROC esta por encima de la diagonal y el AUC es de 0.87, lo que indica que el modelo esta realizando una prediccion mejor que un clasificador aleatorio en datos no conocidos. De esta manera finalizaremos con un validacion cruzada de 6 pliegues.
+
+```{r}
+library(purrr)
+#Ajustar modelo usando validacién cruzada de 4 pliegues, asegurando que
+# se guardan las predicciones de cada pliegue
+set.seed (113)
+
+modelo_ent <- train(Survived ~ Age + Pclass + Sex + SibSp, data = titanic_sample, method = "glm",
+                    family = binomial(link = "logit"),
+                    trControl = trainControl(method = "cv", number = 6,
+                                             savePredictions = TRUE))
+# Mostrar los coeficientes del modelo obtenido
+modelo_final <- modelo_ent[["finalModel"]]
+modelo_final_str <- capture.output(print (summary (modelo_final), signif.stars = FALSE))
+cat("Coeficientes del modelo final:\n")
+write.table(modelo_final_str[6:9], quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+# Obtener las predicciones por pliegue
+preds <- modelo_ent[["pred"]] |> mutate(pliegue = factor(Resample)) |>select(pred, obs, pliegue)
+
+# Construir las matrices de confusioén de cada pliegue
+conf_mat_list <- preds |> group_split(pliegue) |>map(~ confusionMatrix(.x[["pred"]], .x[["obs"]]))
+
+# Extraer las métricas de evaluacién de interés
+metricas_tab <- conf_mat_list |>map_df(~ data.frame(Exactitud = .$overall["Accuracy"],Sensibilidad = .$byClass["Sensitivity"],Especificidad = .$byClass["Specificity"]))
+
+# Agregar el pliegue, los promedios y las desviaciones estandar
+metricas_tab <- cbind(metricas_tab, Pliegue = levels(preds[["pliegue"]]))
+medias_tab <- data.frame(t(apply(metricas_tab[, -4], 2, mean)), Pliegue = "Media")
+desv_tab <- data.frame(t(apply(metricas_tab[, -4], 2, sd)), Pliegue = "D.E. ")
+metricas_tab <- rbind(metricas_tab, medias_tab, desv_tab)
+
+#Formatear las columnas
+formatea_col <- function(cn) format(metricas_tab[[cn]], digits = 3,width = nchar(cn), justify = "right")
+metricas_str_tab <- sapply(colnames(metricas_tab), formatea_col,USE.NAMES = FALSE, simplify = TRUE)
+
+# Mostrar las métricas obtenidas
+encab <- paste(colnames(metricas_tab), collapse = " ")
+cat("Detalle por pliegue:\n", encab, "\n")
+cat(strrep("-", nchar(encab)), "\n")
+write.table(metricas_str_tab[1:4, ], sep =" ",row.names = FALSE, col.names = FALSE, quote = FALSE)
+cat(strrep("-", nchar(encab)), "\n")
+write.table(metricas_str_tab[5:6, ], sep =" ",row.names = FALSE, col.names = FALSE, quote = FALSE)
+```
+Finalmente mediante validacion cruzada de 6 pliegues, obtenemos que una exactitud maxima de 0.86, sensibilidad maxima de 0.9 y especificidad maxima de 0.85, lo que indica que el modelo se comporta bien con datos no conocidos y cumple con las condiciones necesarias para ser considerado un modelo confiable. Asi mismo, una mala definicion en la seccion de la curva ROC pudo causar que la sensibilidad no refleje la calidad real del modelo.

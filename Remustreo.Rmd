@@ -1,0 +1,168 @@
+---
+title: "Remuestreo"
+author: "Benjamin  Moya"
+date: "2025-05-03"
+output: html_document
+---
+Considera el siguiente enunciado:El conjunto de datos bush del paquete WRS2 contiene datos de un “reality” australiano en quelos participantes debieron comer palotes, ojos de pescado, testículos de canguro y larvas de unapolilla. Específicamente se registró el tiempo que tardaron ocho participantes del programa entener arcadas después de consumir cada uno de los tipos de alimentos
+
+Determina si el tiempo que se tarda una persona en tener arcadas al comer estas cosas es el mismo usando bootstrapping(considera que el procedimiento ominus y el post-hoc deben utilizar las mismas remuestras)
+```{r message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(ggpubr)
+library(car)
+library(ez)
+
+#Exportamos los datos del paquete WRS2 y cargamos los datos
+library(WRS2)
+data(bush)
+
+#Convertimos los datos a formato largo
+bush_long <- bush %>%
+  pivot_longer(cols = -participant, names_to = "food", values_to = "time") %>%
+  mutate(food = factor(food, levels = c("stick_insect", "fish_eye", "kangaroo_testicle", "witchetty_grub")))
+```
+
+Luego de exportados los datos, en base a lo solicitado en el enunciado, donde se deben comparar los tiempos de arcada de 4 grupos distintos de alimentos, la prueba sera del tipo omnibus, las cuales necesitan que los datos esten en formato largo, por lo que se formatean para que cumplan con esta condicion, identificando la variable dependiente como el tiempo, la independiente como el tipo de alimento y el id como el participante.
+
+De esta manera, las hipotesis a contrastar son las siguientes:
+H0: El tiempo promedio que tarda una persona en tener arcadas es el mismo para todos los pares de alimentos.
+Ha: El tiempo promedio que tarda una persona en tener arcadas es el distinto para al menos un par de alimentos.
+
+Para decidir el tipo de prueba omnibus de muestras pareadas a utilizar, verificamos la normalidad de los datos mediante un grafico q-q, el cual arrojo los siguientes resultados:
+```{r}
+# Realizamos tanto la verificacion de normalidad como la de homogeneidad de varianzas.
+tonos_azules = c ("steelblue","steelblue1","cornflowerblue","steelblue4")
+g <- ggqqplot (bush_long, x = "time", y = "food",color = "food" , palette = tonos_azules)
+g <- g + facet_wrap(~ food )
+g <- g + rremove ("x.ticks") + rremove ("x.text")
+g <- g + rremove ("y.ticks") + rremove ("y.text")
+g <- g + rremove ("axis.title")
+print ( g )
+homogeneidad_var <- leveneTest ( time ~ food , bush_long ) 
+print(homogeneidad_var)
+```
+
+Como podemos ver, los datos son razonablemente normales y la homogeneidad de varianzas se cumple, pero la muestra es notablemente reducida y no se puede asegurar ciertos parametros, por lo que se opta por realizar remuestreo mediante bootstrapping con permutaciones.
+
+Primero obtenemos el estadistico F de la prueba de ANOVA para la muestra original, que sera nuestro estadistico observado. Luego definimos la cantidad de remuestras (B) y obtenemos B permutaciones desde la muestra original, calculando para permutacion su respectivo estadistico F con tal de obtener la distribucion de F bajo la hipotesis nula. Finalmente, obtenemos el p-valor como la proporcion de estadisticos F de la distribucion que son mayores al estadistico observado.
+```{r}
+# Obtenemos el valor observado desde el estadistico F
+bush_aov <- ezANOVA(bush_long, dv = time, wid = participant, within = food)
+obs_value_aov <- bush_aov[["ANOVA"]][["F"]]
+
+# Funcion para obtener una permutacion desde en dataframe con 3 columnas
+obtiene_permutacion <- function(i , df_ancho ){
+  df_ancho [ , 2:3] <- t( apply ( df_ancho [ , 2:3] , 1 , sample ))
+  return ( df_ancho ) 
+}
+
+# Definimos B, establecemos una semilla para las remuestras y obtenemos las permutaciones.
+B <- 2999
+set.seed(432)
+permutaciones <- lapply(1:B,obtiene_permutacion,bush)
+
+# Definimos la funcion que obtiene el estadistico F para cada permutacion
+obtiene_F <- function(df_ancho ){
+  bush_long <- bush %>%
+    pivot_longer(cols = -participant, names_to = "food", values_to = "time") %>%
+    mutate(food = factor(food, levels = c("stick_insect", "fish_eye", "kangaroo_testicle", "witchetty_grub")))
+  
+  anova <- ezANOVA ( bush_long , dv = time , within = food ,
+                     wid = participant )
+  return (anova[["ANOVA"]][["F"]])
+}
+
+# Generamos la distribucion de F
+distribucion <- sapply (permutaciones, obtiene_F)
+
+#Obtenemos p 
+p <- (sum(distribucion > obs_value_aov) + 1) / (B + 1)
+```
+
+```{r}
+cat ( " ANOVA de una vía para muestras pareadas con permutaciones :\n " )
+cat ( "Valor p ómnibus : " , p , " \n " )
+```
+Segun la distribucion obtenida desde las B remuestras, p es menor que 0.05, por lo que se rechaza la hipotesis nula en favor de la alternativa y se concluye que al menos un par de alimentos tiene un tiempo promedio de arcada distinto al resto. Para determinar que pares son distintos, se realiza un post-hoc de comparaciones por pares con el mismo procedimiento de remuestreo. 
+
+Primero obtenemos las diferencias observadas entre los pares de alimentos de la muestra original, luego obtenemos la distribucion de las diferencias para cada par de alimentos mediante las permutaciones ya obtenidas y finalmente calculamos el p-valor como la proporcion de estadisticos F, de cada diferencia desde la prueba ANOVA, entre los de la distribucion que son mayores a la diferencia observada, lo que nos indica la probabilidad de observar una diferencia al menos tan extrema como la observada de cada par. Finalmente ajustamos los p-valores mediante el metodo BH, ya que no es necesario ser demasiado estricto, gracias a que los datos son razonablemente normales y el metodo de remuestreo es lo bastante robusto para no requerirlo, aunque depende netamente del contexto critico al que nos podriamos enfrentar.
+
+```{r}
+# Función para calcular la media de las diferencias para dos columnas de una matriz de datos en formato ancho
+obtiene_media_difs <- function(df_ancho , columna_1 , columna_2){
+  media <- mean ( df_ancho [[ columna_1]] - df_ancho [[ columna_2]])
+  return (media)}
+
+# Obtiene las las medias de las diferencias observadas
+dif_obs_SI_FE <- obtiene_media_difs (bush , "stick_insect" , "fish_eye" )
+dif_obs_SI_KT <- obtiene_media_difs (bush  , "stick_insect" , "kangaroo_testicle" )
+dif_obs_SI_WG <- obtiene_media_difs (bush  , "stick_insect" , "witchetty_grub" )
+dif_obs_FE_KT <- obtiene_media_difs (bush  , "fish_eye" , "kangaroo_testicle" )
+dif_obs_FE_WG <- obtiene_media_difs (bush  , "fish_eye" , "witchetty_grub" )
+dif_obs_KT_WG <- obtiene_media_difs (bush  , "kangaroo_testicle" , "witchetty_grub")
+
+# Obtiene las distribuciones de las medias de las diferencias permutadas
+dist_medias_difs_SI_FE <- sapply ( permutaciones , obtiene_media_difs ,
+                                 "stick_insect" , "fish_eye" )
+dist_medias_difs_SI_KT <- sapply ( permutaciones , obtiene_media_difs ,
+                                 "stick_insect" , "kangaroo_testicle" )
+dist_medias_difs_SI_WG <- sapply ( permutaciones , obtiene_media_difs ,
+                                 "stick_insect" , "witchetty_grub" )
+dist_medias_difs_FE_KT <- sapply ( permutaciones , obtiene_media_difs ,
+                                 "fish_eye" , "kangaroo_testicle" )
+dist_medias_difs_FE_WG <- sapply ( permutaciones , obtiene_media_difs ,
+                                 "fish_eye" , "witchetty_grub" )
+dist_medias_difs_KT_WG <- sapply ( permutaciones , obtiene_media_difs ,
+                                 "kangaroo_testicle" , "witchetty_grub" )
+
+# Obtener valores p
+num <- sum ( abs ( dist_medias_difs_SI_FE ) > abs ( dif_obs_SI_FE) ) + 1
+den <- B + 1
+p_SI_FE <- num / den
+
+num <- sum ( abs ( dist_medias_difs_SI_KT ) > abs ( dif_obs_SI_KT ) ) + 1
+den <- B + 1
+p_SI_KT <- num / den
+
+num <- sum ( abs ( dist_medias_difs_SI_WG ) > abs ( dif_obs_SI_WG ) ) + 1
+den <- B + 1
+p_SI_WG <- num / den
+
+num <- sum ( abs ( dist_medias_difs_FE_KT ) > abs ( dif_obs_FE_KT ) ) + 1
+den <- B + 1
+p_FE_KT <- num / den
+
+num <- sum ( abs ( dist_medias_difs_FE_WG ) > abs ( dif_obs_FE_WG ) ) + 1
+den <- B + 1
+p_FE_WG <- num / den
+
+num <- sum ( abs ( dist_medias_difs_KT_WG ) > abs ( dif_obs_KT_WG ) ) + 1
+den <- B + 1
+p_KT_WG<- num / den
+
+valores_p <- c (p_SI_FE , p_SI_KT , p_SI_WG , p_FE_KT , p_FE_WG , p_KT_WG )
+
+# Ajustar y mostrar valores p
+valores_p_adj <- p.adjust ( valores_p , method = "BH" )
+cat ( " \n \n " )
+cat ( " Análisis post - hoc ( permutaciones ) para la diferencia de las medias \n " )
+cat ( " - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -\n " )
+cat ( " Valores p ajustados :\n " )
+cat ( sprintf ( " stick_insect - fish_eye : %.6f \n " , valores_p_adj [1]) )
+cat ( sprintf ( " stick_insect - kangaroo_testicle : %.6f \n " , valores_p_adj [2]) )
+cat ( sprintf ( " stick_insect - witchetty_grub : %.6f \n " , valores_p_adj [3]) )
+cat ( sprintf ( " fish_eye - kangaroo_testicle : %.6f \n " , valores_p_adj [4]) )
+cat ( sprintf ( " fish_eye - witchetty_grub : %.6f \n " , valores_p_adj [5]) )
+cat ( sprintf ( " kangaroo_testicle - witchetty_grub : %.6f \n " , valores_p_adj [6]) )
+cat ( " \nDiferencias observadas :\n " )
+cat ( sprintf ( " stick_insect - fish_eye : %6.3 f \n " , dif_obs_SI_FE ) )
+cat ( sprintf ( " stick_insect - kangaroo_testicle : %6.3 f \n " , dif_obs_SI_KT) )
+cat ( sprintf ( " stick_insect - witchetty_grub : %6.3 f \n " , dif_obs_SI_WG ))
+cat ( sprintf ( " fish_eye - kangaroo_testicle : %6.3 f \n " , dif_obs_FE_KT) )
+cat ( sprintf ( " fish_eye - witchetty_grub : %6.3 f \n " , dif_obs_FE_WG ) )
+cat ( sprintf ( " kangaroo_testicle - witchetty_grub : %6.3 f \n " , dif_obs_KT_WG ))
+```
+Como podemos observar en los resultados, el post-hoc arroja que las diferencias son significativas para los pares fish_eye - kangaroo_testicle y kangaroo_testicle - witchetty_grub. Esto indica que con un 95% de confianza podemos afirmar que el tiempo promedio de arcada al comer ojos de pescado es significativamente distinto al de los testiculos de canguro y que el tiempo promedio de arcada al comer testiculos de canguro es significativamente distinto al de las larvas de polilla, por lo que podriamos decir que hay mas rechazo a los testiculos de canguro que a los otros alimentos, ya que los tiempos son significativamente menores.

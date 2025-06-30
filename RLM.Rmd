@@ -1,0 +1,191 @@
+---
+title: "RLM"
+output: html_document
+date: "2025-05-27"
+---
+
+Tome una muestra de 100 observaciones del conjunto de datos Prestige del paqucte carData, y cons-truya un modelo de RLM con dos o tres predictores para la variable de salida income y evalta suconfiabilidad y calidad predictiva usando validacion cruzada simple.
+
+```{r message=FALSE,warning=FALSE}
+
+# Cargamos las librerias
+library(carData)
+library(car)
+library(ggpubr)
+library(dplyr)
+library(tidyr)
+library(leaps)
+
+# Cargamos el dataset
+data("Prestige")
+
+# Seleccionamos la muestra
+set.seed(123)
+prestige_sample <- Prestige %>%
+  sample_n(100)
+```
+
+Luego de obtenidos los datos, vemos que estos corresponden a caracteristicas de diferentes ocupaciones. Asi para realizar el RLM para la variable "income" primero  seleccionaremos los predictores con los que realizar el modelo RLM, mediante una busqueda exhaustiva de los predictores que mejor se ajusten al modelo, atraves de la funcion regsubsets().
+
+```{r message=FALSE,warning=FALSE}
+# Indicamos el modelo inicial
+search <- regsubsets(income ~ ., data = prestige_sample, nbest = 1, nvmax = 5, method = "exhaustive")
+
+# Graficamos los modelos
+plot(search)
+
+# Extraer los mejores subconjuntos
+resumen_combinaciones <- summary (search)
+i_bic_minimo <- which.min(resumen_combinaciones[["bic"]])
+i_r2a_maximo <- which.max(resumen_combinaciones[["adjr2"]])
+
+mejor_comb_bic <- resumen_combinaciones[["which"]][i_bic_minimo, ]
+mejor_comb_r2a <- resumen_combinaciones[["which"]][i_r2a_maximo, ]
+
+# Extraer las variables seleccionadas
+comb_mejor_bic <- names(mejor_comb_bic[mejor_comb_bic == TRUE])
+comb_mejor_r2a <- names(mejor_comb_r2a[mejor_comb_r2a == TRUE])
+
+# Eliminar variables indicadoras
+nombres_mejor_bic <- unique(gsub("7(.*)\\d$", "\\1", comb_mejor_bic))
+nombres_mejor_r2a <- unique(gsub("7(.*)\\d$", "\\1i", comb_mejor_r2a) )
+
+# Obtener las formulas
+pred_mejor_bic <- paste(nombres_mejor_bic[-1], collapse = " + ")
+pred_mejor_r2a <- paste(nombres_mejor_r2a[-1], collapse = " + ")
+
+fmla_mejor_bic <- as.formula(paste("income", pred_mejor_bic, sep = " ~ "))
+fmla_mejor_r2a <- as.formula(paste("income", pred_mejor_r2a, sep = " ~ "))
+
+# Construir y mostrar los mejores modelos
+modelo_mejor_bic <- lm(fmla_mejor_bic, data = prestige_sample)
+modelo_mejor_r2a <- lm(fmla_mejor_r2a, data = prestige_sample)
+
+summary (search)
+print(modelo_mejor_bic)
+print(modelo_mejor_r2a)
+```
+
+```{r message=FALSE,warning=FALSE}
+modelo_nulo <- lm(income ~ 1, data = prestige_sample)
+
+anova(modelo_nulo, modelo_mejor_bic, modelo_mejor_r2a)
+```
+En primera instancia, podemos notar que los predictores que poseen un BIC altamente similar al del modelo nulo son tanto la variable "women", como la variable "prestige", por lo que podemos anticipar la eleccion de ambos dentro de nuestros modelos. Luego, seleccionamos el BIC minimo y el maximo coeficiente de determinacion, con tal de filtrar las variables que mejor ajusten estos parametros en comparacion del intercepto. De esta manera, obtenemos 2 modelos, con las mismas dos variables que inicialmente pudimos observar en el grafico de combinaciones. Por ende, los predictores que resultan mas significativos para el modelo son las variables "women" y "prestige".
+
+Ahora, debemos evaluar la confiabilidad del modelo. Esto lo podemos revisar atraves de 9 condiciones:
+1) La variable de respuesta debe ser cuantitativa y continua: Como el ingreso de una persona es una medida cuantitativa y continua, esta condicion se cumple.
+2) Los predictores deben ser cuantitativos o dicotomicos: Como "women" es el porcentaje de mujeres en la ocupacion y "prestige" es la calificacion de prestigio para la ocuapcion en una escala de 0 a 100, entonces ambos son cuantitativos y esta condicion se cumple.
+3) Los predictores deben tener algun grado de variabilidad: 
+
+```{r message=FALSE,warning=FALSE}
+
+# Analizamos la varianza de cada columna
+var(prestige_sample$women)
+var(prestige_sample$prestige)
+```
+
+Como ambas varianzas son distintas de 0, entonces podemos decir que los predictores no son constantes.
+
+4) Cada predictor debe estar relacionado linealmente con la resputes.
+5) La distribucion de residuos debe ser cercana a la normal.
+6) La variabilidad de los resiudos debe ser aproximadamente constante.
+
+Para verificar estas 3 condiciones, revisaremos los graficos de los residuos mediante las funciones utilizadas anteriormente en los modelos RLS.
+```{r message=FALSE,warning=FALSE}
+# Generamos los modelos individuales
+model_1 <- lm(income ~ women , data = prestige_sample)
+model_2 <- lm(income ~ prestige , data = prestige_sample)
+
+# Graficamos los residuos de los modelos individuales
+plot_1 <- residualPlots(model_1, col = "steelblue", pch = 20, col.line = c("steelblue4","red"))
+plot_2 <- residualPlots(model_2, col = "steelblue", pch = 20, col.line = c("steelblue4","red"))
+
+
+# Graficamos los residuos marginales individuales
+plot_marg_1 <- marginalModelPlots(model_1, sd=TRUE,
+                   id = list(method="r", n = 3, cex = 0.7, locztion = "lr"),
+                   col = "steelblue", pch = 20, col.line = c("steelblue4","red"))
+plot_marg_2 <- marginalModelPlots(model_2, sd=TRUE,
+                   id = list(method="r", n = 3, cex = 0.7, locztion = "lr"),
+                   col = "steelblue", pch = 20, col.line = c("steelblue4","red"))
+```
+Primero notar que los estadisticos presentados tiene un p-valor mayor a 0.01, lo que indica que la relacion entre los predictores y la respuesta es lineal. Aunque analizando el grafico se puede distinguir que esta es mas fuerte para la variable "women " que para la variable "prestige", aunque esto pueda ser algunos valores atipicos que afectan la relacion, se ve que no hay patrones claros en los residuos, ni en los ajustados, por lo que podemos estar seguros de esto. 
+
+Por otro lado, el grafico de residuos para las 2 variables esta centrado cercano a 0, lo que indica que la distribucion de los residuos es aproximadamente normal y como los residuos estan distribuidos de manera aleatoria, sin un patron claro, podemos decir que la variabilidad de los residuos es aproximadamente constante. Para estar seguros de esto aplicaremos el ncvTest() para verificar la homocedasticidad de los residuos.
+
+```{r message=FALSE,warning=FALSE}
+# Generamos los modelos individuales
+model_1 <- lm(income ~ women , data = prestige_sample)
+model_2 <- lm(income ~ prestige , data = prestige_sample)
+
+# Aplicamos la funcion
+ncvTest(model_1)
+ncvTest(model_2)
+```
+Como ambos modelos tiene un p-valor menor a 0.05, podemos decir que la variabilidad de los residuos es aproximadamente constante, por lo que se cumple la condicion de homocedasticidad.
+
+7) Los residuos son independientes entre si: Para verificar esta condicion, podemos utilizar el test de Durbin-Watson, que nos permite evaluar la independencia de los residuos. 
+
+```{r}
+
+db1 <- durbinWatsonTest(modelo_mejor_bic)
+
+print(db1)
+
+
+```
+Como el p-valor de la prueba es mayor a 0.05, podemos concluir que los resiudos son independientes entre si, por lo que se cumple la condicion de independencia.
+
+8) No debe existir multicolinealidad: Para verificar esta condicion, ocuparemos el coeficiente VIF y GVIF para el modelo completo, mediante la funcion vif().
+
+```{r}
+# Generamos el modelo completo
+model_full <- lm(income ~ . , data = prestige_sample) 
+# Calculamos el VIF y GVIF
+vif_bic <- vif(model_full)
+print(vif_bic)
+```
+
+Como podemos observar el modelo completo presenta un multicolinealidad moderada, lo cual indica que podria afectar en menor medida la efectividad del modelo pero no es un gran problema.
+
+9) Las estimaciones de los coeficientes del modelo no deben estar alterados por unas pocas observaciones influyentes: Esta condiciones se revisara mediante el grafico de influencia de observaciones, para identificar que medida genera mayor apalancamiento en el modelo, y si sera necesario eliminarla o no.
+
+```{r}
+# Generamos el grafico
+influencePlot(model_full, id = (cex = 0.7))
+```
+
+Como ningun punto indica un indice de apalancamiento significativo y la distancia de Cook es menor a 1 para los 4 puntos mas influyentes, podemos concluir que no hay observaciones que alteren significativamente las estimaciones de los coeficientes del modelo.
+
+Luego de verificadas las condiciones del modelo, podemos decir que el modelo generado es altamente confiable y cumple con las condiciones necesarias para ser considerado un modelo de regresion lineal multiple valido.
+
+Por ultimo, procedemos a verificar la calidad de la prediccion del modelo mediante validacion cruzada simple, para lo cual utilizaremos la funcion train() y predict() sobre el modelo generado con "women" y "prestige".
+
+```{r}
+# Obtenemos los conjuntos de entrenamiento y prueba
+set.seed(121)
+
+n_entrenamiento <- floor(100 * 0.8)
+i_entrenamiento <- sample.int(n = 100,size = n_entrenamiento, replace = FALSE)
+entrenamiento <- prestige_sample[i_entrenamiento, ]
+prueba <- prestige_sample[-i_entrenamiento, ]
+
+# Ajustamos el modelos con el conjunto de entrenamiento
+modelo <- lm(income ~ prestige + women, data = entrenamiento)
+summary(modelo)
+
+# Calculamos el RMSE para el entrenamiento
+rmse_entrenamiento <- sqrt(mean(resid(modelo)^2))
+print(rmse_entrenamiento)
+
+# Predecimos el conjunto de prueba
+predicciones <- predict(modelo, prueba)
+
+# Calculamos el error y RMSE para el conjunto de prueba
+error <- prueba$income - predicciones
+rmse_prueba <- sqrt(mean(error^2))
+print(rmse_prueba)
+
+```
+En la actividad anterior pudimos ver que el RMSE estaba cercano a los 3 mil, esta vez es mas cercano a los 2 mil, lo que indica que el modelo es mas preciso, que uno de RLS. Aun asi este sigue siendo un valor alto, por lo que aun no es lo suficientemente preciso para ser considerado un modelo de regresion lineal multiple valido. Sin embargo, como se verifico que es un modelo altamente confiable, gracias a las caracteristicas de sus datos, se podria evalua la posibilidad de mejorar el modelo segun la cantidad de datos de la muestra, la cantidad de predictores como "education" que observamos tambien una alta aproximacion al BIC del intercepto e incluso a la eliminacion de algun dato atipico que afecte la relacion entre los predictores y la respuesta.

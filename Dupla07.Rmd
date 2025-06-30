@@ -1,0 +1,220 @@
+---
+title: "Pep 2 - Dupla 07"
+output: html_document
+date: "2025-06-30"
+---
+
+## Pregunta 1 
+
+El gobierno regional de Coquimbo desea evaluar si existen diferencias significativas en los puntajes obtenidos en la prueba obligatoria de Competencia Matemática entre estudiantes que recibieron educación secundaria Humanista-Científica y Técnico-Profesional. Para ello, ha seleccionado una muestra aleatoria de 10 egresados de cada tipo de formación en 2024.
+
+Para responder esta pregunta, se pide realizar un análisis inferencial usando remuestreo con bootstrapping(299 repeticiones, con la semilla 5317 para reproducir los resultados) y 99% de confianza, explicando y justificando paso a paso el procedimiento seguido, e interpretando los resultados obtenidos, para formular una conclusión que responda al problema del Gobierno Regional.
+
+R: Antes de realizar el análisis, cargamos los datos en un dataframe y visualizamos las primeras filas para entender la estructura de estos.
+
+```{r message=FALSE,warning=FALSE}
+# Cargamos las librerias necesarias
+library(dplyr)
+library(boot)
+library(simpleboot)
+library(tidyr)
+library(ggpubr)
+library(car)
+library(ggplot2)
+library(caret)
+library(psych)
+library(leaps)
+library(pROC)
+
+# Construimos el dataframe en formato largo
+data <- data.frame( 
+  Tipo = c(rep("Humanista-Cientifica", 10), rep("Tecnico-Profesional", 10)),
+  Puntaje = c(785,990,963,939,879,549,669,705,607,628,
+              563,657,549,478,657,688,616,513,879,513)
+)
+print(data)
+```
+
+Lo que se pide es comparar los puntajes entre dos grupos, por lo que es necesario realizar un test de diferencia de medias como el `t-test`. Para ello, primero se deben verificar las condiciones de normalidad de los datos, con tal de verificar si es posible aplicar este tipo de pruebas o si debemos optar por la propuesta de remuestreo con bootstrapping. Esto se realizará con un gráfico `Q-Q`y una prueba de `Shapiro-Wilk`.
+
+```{r}
+# Realizamos la verificacion de normalidad mediante el grafico q-q de los grupos.
+tonos_azules = c ("steelblue","steelblue1")
+g <- ggqqplot (data, x = "Puntaje", y = "Tipo",color = "Tipo" , palette = tonos_azules)
+g <- g + facet_wrap(~ Tipo)
+g <- g + rremove ("x.ticks") + rremove ("x.text")
+g <- g + rremove ("y.ticks") + rremove ("y.text")
+g <- g + rremove ("axis.title")
+print ( g )
+
+# Realizamos la prueba de normalidad de Shapiro-Wilk
+shapiro.test(data$Puntaje[data$Tipo == "Humanista-Cientifica"])
+shapiro.test(data$Puntaje[data$Tipo == "Tecnico-Profesional"])
+```
+
+Para ambos grupos, el gráfico `Q-Q` mantiene un comportamiento normal de los datos por lo que se podría asumir la normalidad de la población al no tener ningún dato que se desvíe de la línea de referencia e incluso la prueba de `Shapiro-Wilk` arroja un p-valor mayor a 0.05, lo que indica que no se rechaza la hipótesis nula de normalidad. Por lo tanto, se puede aplicar el `t-test` para comparar las medias de los dos grupos. Pero, aunque sea una opción, la muestra por grupos es pequeña y podría no ser representativa de la población, por lo que se optara por realizar un análisis de remuestreo con bootstrapping, el cual es robusto a la violación de supuestos y permite obtener una estimación de la distribución de la media muestral.
+
+Por lo anterior definimos la hipótesis nula y alternativa como:
+
+### H0: No hay diferencia significativa entre las medias de los puntajes de los dos tipos de formación. (Mu_HC = Mu_TP)
+### HA: Hay una diferencia significativa entre las medias de los puntajes de los dos tipos de formación. (Mu_HC != Mu_TP)
+
+En este caso, y gracias al análisis anteriormente planteado, ocuparemos el estadístico `t` de las remuestras, ya que la distribución de los datos de la muestra presentaba un comportamiento normal y cumpliría con el teorema del límite central. De esta manera podemos realizar un análisis de remuestreo con bootstrapping para obtener una distribución de la diferencia de medias entre los dos grupos mediante la función `two.boot` del paquete `simpleboot`, que permite realizar remuestreo de dos muestras independientes.  
+
+```{r}
+# Fijamos una semilla y la cantidad de remuestras (Las indicadas por el enunciado)
+set.seed(5317)
+B <- 299
+
+# Creamos dos dataframes separados para cada tipo de formacion
+data_HC <- data %>% filter(Tipo == "Humanista-Cientifica")
+data_TP <- data %>% filter(Tipo == "Tecnico-Profesional")
+
+# Generamos la distribución bootstrap de la diferencia de medias
+boot_distribution <- two.boot(data_HC$Puntaje, data_TP$Puntaje, FUN = mean, R = B)
+
+# Armamos el dataframe del estadistico de remuestreo
+boot_data <- data.frame(difference = boot_distribution$t)
+
+# Gráficamos la distribución de la diferencia de medias
+g_hist <- gghistogram(boot_data, x = "difference", bins = 100,
+                      xlab = "Diferencia de medias", ylab = "Frecuencia")
+g_qq <- ggqqplot(boot_data, x = "difference")
+
+# Combinamos los graficos del histograma y el Q-Q plot
+g <- ggarrange(g_hist, g_qq)
+print(g)
+```
+
+Analizando los gráficos de la distribución de la diferencia de medias, se observa que la distribución es aproximadamente normal, al estar dentro de los límites de la región. El histograma muestra una campana, con un dato desviado de la figura, y el gráfico `Q-Q` indica que los quantiles de la distribución de remuestreo se alinean bien con los quantiles teóricos de una distribución normal.
+
+De esta manera, calculamos el intervalo de confianza del 99% para la diferencia de medias entre los dos grupos.
+
+```{r warning=FALSE}
+# Datos de tendencia central de la distribucion de remuestreo
+mean_diff <- mean(boot_data$difference)
+sd_diff <- sd(boot_data$difference)
+
+# Intervalo de confianza del 99%
+alfa <- 0.01
+ci <- boot.ci(boot_distribution, conf = 1 - alfa, type = "bca")
+print(ci)
+```
+El intervalo de confianza del 99% para la diferencia de medias entre los dos grupos es aproximadamente (7.1;291.5), por lo que la prueba está indicando que hay evidencia suficiente para rechazar la hipótesis nula de que no hay diferencia significativa entre las medias de los puntajes de los dos tipos de formación, ya que el intervalo no incluye el cero. Por ende, mediante la distribución de remuestreo con bootstrapping, calcularemos el p-valor asociado a la diferencia de medias.
+
+```{r}
+# Calculo del p-valor con 99% de confianza en una prueba bilateral
+null_hypothesis <- 0
+desviacion <- mean(boot_data$difference) - null_hypothesis
+null_distribution <- boot_data$difference - desviacion
+p_value <- (sum(abs(null_distribution))>= abs(mean(data_HC$Puntaje)-mean(data_TP$Puntaje)) + 1) / (B + 1)
+
+# Mostramos el p-valor
+print(p_value)
+```
+
+Como el p-valor de la prueba de remuestras bootstrapping realizada es menor a 0.01, se rechaza la hipotesis nula en favor de la alternativa, y podemos concluir que existen diferencias significativas en los puntajes obtenidos en la prueba de Competencia Matemática entre estudiantes que recibieron educación secundaria Humanista-Científica y Técnico-Profesional en la región de Coquimbo.
+
+
+## Pregunta 2
+
+El gobierno regional de Coquimbo desea identificar factores críticos que influyen en el acceso a la educación superior de los habitantes de la región. En consecuencia, le ha solicitado construir un modelo de regresión adecuado para predecir si las personas fueron o no aceptadas por una institución de educación superior, que use entre 2 y 5 predictores, asegurando que el modelo obtenido sea confiable. Determine si la calidad predictiva del modelo satisface los requerimientos del gobierno regional, evaluándolo con validación cruzada de 10 pliegues. Usando la semilla 5317
+
+### Solución
+
+Dado que se nos pide realizar una predicción de una variable binaria, se debe utilizar un modelo de regresión logística. Para ello, se deben seleccionar entre 2 y 5 variables predictoras que puedan influir en la variable de salida "Matriculado". A continuación, se realizará el análisis de los datos y la construcción del modelo.
+
+Limpieza de datos y selección de predictores
+
+```{r}
+library(car)
+library(ggplot2)
+library(caret)
+library(dplyr)
+library(ggpubr)
+library(psych)
+library(leaps)
+library(pROC)
+
+data=read.csv2("EI-2025-1-PE2-Datos.csv")
+set.seed(5317)
+data_coquimbo= data %>% filter(Region == "Coquimbo")
+#eliminar la variable Xy la region no es de utilidad
+data_coquimbo <- data_coquimbo %>% select(!all_of(c("X","Region")))
+combinations <- regsubsets(Matriculado ~ ., data = data_coquimbo, nbest = 1, nvmax = 5, method = "exhaustive")
+summary(combinations)
+plot(combinations)
+```
+
+Para la creación del modelo se utilizarán como predictores las variables ranking, matemáticas y lenguaje. Ya que, como se observa en el gráfico arrojado por la función regsubsets, son las variables con más significancias acordes a la variable de salida a evaluar.
+
+Para la creación del modelo se usará la regresión hacia adelante, donde se buscará obtener el modelo con más significancia y que más reduzca la RSS.
+
+```{r}
+modelonulo=glm(Matriculado ~ 1, data = data_coquimbo, family = binomial)
+modelo1=update(modelonulo, as.formula(paste(". ~ . +", "Ranking")))
+modelo2=update(modelo1, as.formula(paste(". ~ . +", "Matematicas")))
+modelo3=update(modelo2, as.formula(paste(". ~ . +", "Lenguaje")))
+anova(modelonulo, modelo1, modelo2, modelo3)
+AIC(modelonulo, modelo1, modelo2, modelo3)
+BIC(modelonulo, modelo1, modelo2, modelo3)
+
+summary(modelo3)
+```
+
+Como se observa en el análisis de modelos realizado, el modelo 3 es el que mejor ajusta los datos y el que más minimiza la RSS, por lo que se seleccionará este modelo como el modelo final y a evaluar su confiabilidad y calidad predictiva.
+
+Confiabilidad del modelo:
+
+Recordar que se deben cumplir ciertas condiciones para verificar la confiabilidad del modelo, las cuales son:
+
+1- . No debe existir multicolinealidad
+
+2- . Independencia de los residuos
+
+3- . No influencia de los valores atípicos
+
+
+```{r}
+#multicolinealidad
+vif(modelo3)
+
+#independencia de los residuos
+durbinWatsonTest(modelo3)
+
+#valores atipicos
+influencePlot(modelo3)
+```
+
+Podemos comprobar gracias al resultado del test vif que no existe ninguna multicolinealidad entre las variables asignadas como predictores. También se observa que no existe sobre influencia de los valores atípicos y finalmente, gracias al test Durbin Watson se verifica que los residuos son independientes, ya que el resultado de este no fue significativo. Por lo tanto, al cumplir todas las condiciones anteriores, podemos concluir que el modelo es confiable y se puede utilizar para predecir la variable de salida solicitada.
+
+Evaluación de calidad predictiva del modelo utilizando validación cruzada de 10 pliegues
+```{r}
+data_coquimbo$Matriculado <- factor(data_coquimbo$Matriculado, labels = c("No", "Si"))
+
+control_entrenamiento <- trainControl(method = "cv", 
+                                      number = 10,
+                                      savePredictions = TRUE,
+                                      classProbs = TRUE, 
+                                      summaryFunction = twoClassSummary)
+
+
+modelo_final_cv <- train(Matriculado ~ Ranking + Matematicas + Lenguaje, 
+                         data = data_coquimbo, 
+                         method = "glm",
+                         family = "binomial",
+                         trControl = control_entrenamiento,
+                         metric = "ROC")
+
+print(modelo_final_cv)
+matriz=confusionMatrix(modelo_final_cv)
+print(matriz)
+# Curva ROC
+roc_obj <- roc(data_coquimbo$Matriculado, 
+                as.numeric(predict(modelo_final_cv, type = "prob")[, "Si"]))
+plot(roc_obj)
+
+```
+
+
+Como se puede observar podemos entender el Clasificador para estimar la variable de salida solicitada es bastante adecuado, ya que se observa un valor AUC del 0.8335 lo cual es un indicativo de que el modelo clasifica correctamente la variable de salida en un 83.35% de las veces y la forma de la curva ROC indica una buena relación entre la especificidad y sensibilidad lo que es crucial para este tipo de modelos. Si bien el modelo no es perfecto, se puede concluir que al ser confiable es adecuado para predecir si una persona será aceptada o no en una institución de educación superior.

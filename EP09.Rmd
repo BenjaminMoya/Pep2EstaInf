@@ -1,0 +1,171 @@
+---
+title: "EP 09"
+output: html_document
+date: "2025-05-27"
+---
+
+```{r message=FALSE,warning=FALSE}
+library(ggpubr)
+library(dplyr)
+library(tidyr)
+library(car)
+library(leaps)
+
+# Cargamos los datos 
+data <- read.csv2("datos-felicidad.csv",sep = ",", dec = ".", stringsAsFactors = FALSE)
+
+# Definimos la semilla
+set.seed(30)
+
+# Tomamos la muestra de 70 personas
+sample_data <- data %>% 
+        sample_n(70)
+```
+
+Luego de seleccionados los datos, realizamos un analisis para determinar cual es el predictor que mejor explica la variable Felicidad. Segun una conversacion, creemos que este sera el numero de mascotas, por lo que realizamos un modelo de regresion lineal simple con este, e iremos agregando variables para ver si mejora el modelo.
+```{r message=FALSE,warning=FALSE}
+# Modelo nulo
+model_null <- lm(Felicidad ~ 1, data = sample_data)
+
+# Modelo con el predictor inicial
+model_initial <- lm(Felicidad ~ N_mascotas, data = sample_data)
+
+# Resumen del modelo inicial
+summary(model_initial)
+
+# Modelo con el predictor inicial y el numero de amigos
+model_friends <- lm(Felicidad ~ N_mascotas + N_amigos, data = sample_data)
+
+# Resumen del modelo con amigos
+summary(model_friends)
+
+# Modelo con el predictor inicial y la edad
+model_age <- lm(Felicidad ~ N_mascotas + Edad, data = sample_data)
+
+# Resumen del modelo con edad
+summary(model_age)
+
+# Modelo con el predictor inicial y el sexo
+model_sex <- lm(Felicidad ~ N_mascotas + Sexo, data = sample_data)
+
+# Resumen del modelo con sexo
+summary(model_sex)
+
+# Modelo con el predictor inicial y el sexo
+model_full <- lm(Felicidad ~ ., data = sample_data)
+
+# Resumen del modelo con sexo
+summary(model_full)
+
+# Comparamos los modelos mediante la funcion anova()
+anova(model_null, model_initial, model_friends)
+
+# Comparamos los modelos mediante la funcion anova()
+anova(model_null, model_initial, model_age)
+
+# Comparamos los modelos mediante la funcion anova()
+anova(model_null, model_initial, model_sex)
+
+# Comparamos los modelos mediante la funcion anova()
+anova(model_null, model_initial, model_full)
+```
+
+Como podemos ver luego de la comparacion de los modelos, el que solo tiene el numero de mascotas es el que mejor explica la variable Felicidad,  gracias a que posee una reduccion mas significativa de los residuos, que la generada por los que seleccionan mas variables. Pero en favor de la actividad utilizaremos el modelo completo, que aunque mas complejo, reduce en mayor medida los residuos, en comparacion de sus predecesores, menos el inicial.
+
+Evaluamos la confiabilidad del modelo atraves de 9 condiciones:
+1) La variable de respuesta debe ser cuantitativa y continua: Como la variable "Felicidad" es una escala del 1 al 10, no se cumple esta condicion, lo que podria afectar a la capacidad predictiva del modelo.
+2) Los predictores deben ser cuantitativos o dicotomicos: Como "N_mascotas","N_amigos" y "Edad" es una medida cuantitativa, y "Sexo" es dicotomico, se cumple esta condicion.
+3) Los predictores deben tener algun grado de variabilidad:
+
+```{r message=FALSE,warning=FALSE}
+# Analizamos la varianza de las variables cuantitativas
+var(sample_data$N_mascotas)
+var(sample_data$N_amigos)
+var(sample_data$Edad)
+```
+
+Como se poseen varianzas distintas a 0, se cumple esta condicion.
+
+4) Cada predictor debe estar relacionado linealmente con la resputes.
+5) La distribucion de residuos debe ser cercana a la normal.
+
+Para verificar estas 2 condiciones, revisaremos los graficos de los residuos mediante las funciones utilizadas anteriormente en los modelos RLS.
+
+```{r message=FALSE,warning=FALSE}
+# Generamos el modelo general
+model <- lm(Felicidad ~. , data = sample_data)
+
+# Graficamos los residuos de los modelos individuales
+plot_1 <- residualPlots(model, col = "steelblue", pch = 20, col.line = c("steelblue4","red"))
+```
+
+Como los p-valores para cada predictor son mayores a 0.05, podemos decir que estos se relacionan linealmente con la variable de respuesta, pero como los residuos poseen patrones reconocibles como parabolas, la condicion no se cumple y puede afectar a la capacidad del modelo.
+
+6) La variabilidad de los residuos debe ser aproximadamente constante: Esta condicion la podemos comprobar mediante la homocedasticidad de los residuos, que se puede verificar con la funcion ncvTest().
+
+```{r message=FALSE,warning=FALSE}
+# Verificamos la homocedasticidad de los residuos
+ncvTest(model)
+```
+
+Como el p-valor es mayor a 0.05, podemos concluir que la variabilidad de los residuos es constante, por lo que se cumple esta condicion.
+
+7) Los residuos son independientes entre si: Para verificar esta condicion, podemos utilizar el test de Durbin-Watson, que nos permite evaluar la independencia de los residuos. 
+
+```{r}
+# Verificamos la independencia de los residuos
+durbinWatsonTest(model)
+```
+
+Como el p-valor es mayor a 0.05, podemos concluir que los residuos son independientes entre si, por lo que se cumple esta condicion.
+
+8) No debe existir multicolinealidad: Para verificar esta condicion, ocuparemos el coeficiente VIF y GVIF para el modelo completo, mediante la funcion vif().
+
+```{r}
+# Calculamos el VIF y GVIF
+vif(model)
+```
+
+Como todos los valores son aproximadamente 1 y no superan el umbral de 5, podemos concluir que no existe multicolinealidad entre los predictores, por lo que se cumple esta condicion.
+
+9) Las estimaciones de los coeficientes del modelo no deben estar alterados por unas pocas observaciones influyentes: Esta condiciones se revisara mediante el grafico de influencia de observaciones, para identificar que medida genera mayor apalancamiento en el modelo, y si sera necesario eliminarla o no.
+
+```{r}
+# Generamos el grafico
+influencePlot(model, id = (cex = 0.7))
+```
+
+Como podemos ver, no hay puntos que se alejen significativamente del resto, no es necesario eliminar ninguna observacion del modelo, y podemos decir que no hay observaciones que alteren significativamente los coeficientes del modelo.
+
+Luego de verificadas las condiciones del modelo, podemos decir que el modelo generado es altamente confiable y cumple con las condiciones necesarias para ser considerado un modelo de regresion lineal multiple valido.
+
+Por ultimo, procedemos a verificar la calidad de la prediccion del modelo mediante validacion cruzada simple
+
+```{r}
+# Obtenemos los conjuntos de entrenamiento y prueba
+set.seed(121)
+
+n_entrenamiento <- floor(100 * 0.8)
+i_entrenamiento <- sample.int(n = 100,size = n_entrenamiento, replace = FALSE)
+entrenamiento <- sample_data[i_entrenamiento, ]
+prueba <- sample_data[-i_entrenamiento, ]
+
+# Ajustamos el modelos con el conjunto de entrenamiento
+modelo <- lm(Felicidad ~ ., data = entrenamiento)
+summary(modelo)
+
+# Calculamos el RMSE para el entrenamiento
+rmse_entrenamiento <- sqrt(mean(resid(modelo)^2))
+print(rmse_entrenamiento)
+
+# Predecimos el conjunto de prueba
+predicciones <- predict(modelo, prueba)
+
+# Calculamos el error y RMSE para el conjunto de prueba
+error <- prueba$Felicidad - predicciones
+rmse_prueba <- sqrt(mean(error^2))
+print(rmse_prueba)
+
+```
+
+Como el RMSE de tanto el conjunto de prueba como el de entrenamiento es bastante bajo y similar, podemos concluir que el modelo es capaz de predecir la variable Felicidad con una buena precision, y que no esta sobreajustado a los datos de entrenamiento, aunque en algunas ocasiones puede variar esta prediccion por la variabilidad de los datos, la escala de la variable de salida y la forma de los residuos para ciertos predictores.

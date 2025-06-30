@@ -1,0 +1,200 @@
+---
+title: "EP10-Equipo9"
+output: html_document
+date: "2025-06-09"
+---
+
+1.-El equipo crea la variable IMC (índice de masa corporal) como el peso de una persona (en kilogramos) dividida por el cuadrado de su estatura (en metros).
+2.-Si bien esta variable se usa para clasificar a las personas en varias clases de estado nutricional (bajo peso, normal, sobrepeso, obesidad, obesidad mórbida), para efectos de este ejercicio, usaremos dos clases: sobrepeso (IMC ≥ 23,2) y no sobrepeso (IMC < 23,2).
+3.-El equipo crea la variable dicotómica EN (estado nutricional) de acuerdo al valor de IMC de cada persona.
+
+```{r}
+library(ggpubr)
+library(dplyr)
+library(tidyr)
+library(pROC)
+library(caret)
+library(car)
+library(leaps)
+```
+
+
+
+```{r}
+
+# Cargamos los datos
+data <- read.csv2("EP09 Datos.csv")
+
+# Transformamos la estatura de centimetros a metros
+data$Height <- data$Height / 100
+
+# Creamos la variable IMC
+data$IMC <- data$Weight / (data$Height^2)
+
+# Creamos la variable EN
+data$EN <- ifelse(data$IMC >= 23.2, "Sobrepeso", "No sobrepeso")
+
+# Transformamos la variable EN a 1 para sobrepeso y 0 para no sobrepeso
+data$EN <- factor(data$EN, levels = c("No sobrepeso", "Sobrepeso"), labels = c(0, 1))
+```
+
+1.-Asegurando reproducibilidad, seleccionar una muestra de 150 mujeres (si su n° de equipo es un número par) o 150 hombres (si su n° de equipo es impar), asegurando que la mitad tenga estado nutricional “sobrepeso” y la otra mitad “no sobrepeso” en cada caso. Dividir esta muestra en dos conjuntos: los datos de 100 personas (50 con EN “sobrepeso”) para utilizar en la construcción de los modelos y 50 personas (25 con EN “sobrepeso”) para poder evaluarlos.
+
+```{r}
+# Aseguramos reproducibilidad
+set.seed(6658)
+
+# Filtramos por género
+data_male <- data %>% filter(Gender == 1)
+
+# Muestra de 150 hombres mitad sobrepeso y mitad no sobrepeso
+data_sobre <- data %>% filter(EN == "1")
+data_no_sobre <- data %>% filter(EN == "0")
+
+# Seleccionamos una muestra aleatoria de 75 hombres con sobrepeso y 75 hombres sin sobrepeso
+data_sample_sobre <- data_sobre %>% sample_n(75)
+data_sample_no_sobre <- data_no_sobre %>% sample_n(75)
+
+# Extraemos 50 hombres con sobrepeso y 50 hombres sin sobrepeso, y los conbinamos en un mismo dataframe para obtener la mustra de entrenamiento
+data_train <- rbind(data_sample_sobre[1:50, ], data_sample_no_sobre[1:50, ])
+
+# Extraemos 25 hombres con sobrepeso y 25 hombres sin sobrepeso, y los combinamos en un mismo dataframe para obtener la muestra de evaluación
+data_test <- rbind(data_sample_sobre[51:75, ], data_sample_no_sobre[51:75, ])
+```
+
+2.-Recordar las ocho posibles variables predictoras seleccionadas de forma aleatoria en el ejercicio anterior.
+```{r}
+# Verificamos la seleccion de los predictores aleatorios 
+set.seed(6658)
+predictors <- sample(setdiff(names(data_train), c("Weight", "Height","Gender","EN","IMC")), 8)
+predictors
+```
+
+3.-Seleccionar, de las otras variables, una que el equipo considere que podría ser útil para predecir la clase EN, justificando bien esta selección (idealmente con literatura).
+
+R: Hip.Girth (Agregar lo de la fuente)
+
+```{r}
+# Eliminamos las columnas de las varibles que no estan dentro de los posibles predictores
+data_train <- data_train %>% select(EN, Hip.Girth, all_of(predictors))
+data_test <- data_test %>% select(EN, Hip.Girth, all_of(predictors))
+```
+
+4.-Usando el entorno R, construir un modelo de regresión logística con el predictor seleccionado en el paso anterior y utilizando de la muestra obtenida.
+```{r}
+# Creamos el modelo entre EN e Hip.Girth
+model <- glm(EN ~ Hip.Girth,family = binomial(link="logit") ,data = data_train)
+summary(model)
+```
+5.-Usando estas herramientas para la exploración de modelos del entorno R, buscar entre dos y cinco predictores de entre las variables seleccionadas al azar, recordadas en el punto 3, para agregar al modelo obtenido en el paso 5. Para esto, si 
+si su n° de equipo es 1 o 2: utilice selección hacia adelante, sin usar la función step().
+si su n° de equipo es 3 o 4: utilice eliminación hacia atrás, sin usar la función step().
+si su n° de equipo es 5, 6 o 7: utilice búsqueda escalonada usando la función step().
+si su n° de equipo es 8, 9 o 10: utilice búsqueda exhaustiva.
+
+```{r}
+
+# Utilizamos búsqueda exhaustiva para encontrar los mejores predictores atraves de la funcion regsubsets()
+combinations <- regsubsets(EN ~ ., data = data_train, nbest = 1, nvmax = 9, method = "exhaustive")
+summary(combinations)
+plot(combinations)
+```
+R: Como vemos los predictores que resultan mas significativos para son Waist.Girth, Ankle.Minimun.Girth y Knees.diameter. Estos en conjunto de Hip.Girth forman un modelo con un buen nivel de ajuste.
+```{r}
+# Creamos el modelo final
+final_model <- glm(EN ~ Hip.Girth + Waist.Girth + Ankle.Minimum.Girth + Knees.diameter, family = binomial(link="logit"), data = data_train)
+summary(final_model)
+```
+6.-Evaluar la confiabilidad de los modelos (i.e. que tengan un buen nivel de ajuste y son generalizables) y “arreglarlos” en caso de que tengan algún problema.
+
+R: Para verificar que el modelo de regresión logística final es confiable y válido, se evaluaron las siguientes condiciones:
+
+```{r}
+
+# 1. Relación lineal entre predictores y la respuesta transformada
+residualPlots(final_model, terms = ~ Hip.Girth + Waist.Girth + Ankle.Minimum.Girth + Knees.diameter, fitted = FALSE)
+```
+
+Se utilizó la función crPlots() del paquete car para observar los gráficos de residuos parciales. Los gráficos de residuos parciales muestran que la mayoría de los predictores se relacionan de forma aproximadamente lineal con la respuesta transformada (logit de la probabilidad). No se observan patrones de curvatura marcados, por lo tanto, esta condición se cumple razonablemente bien.
+
+```{r}
+
+# 2. Independencia de los residuos
+durbinWatsonTest(final_model)
+```
+
+La prueba de Durbin-Watson entrega un valor cercano a 2 (1.07) con un p-valor alto (0.46), por lo que no se detecta autocorrelación significativa entre los residuos, cumpliéndose esta condición.
+
+
+```{r}
+# 3. Multicolinealidad entre predictores
+vif(final_model)
+
+```
+
+Los valores de VIF están todos bajo 2, lo cual es muy aceptable (muy por debajo del umbral crítico de 5 o 10). Por lo tanto, no hay evidencia de multicolinealidad severa entre los predictores incluidos.
+
+4. Tamaño de muestra adecuado:
+Se consideró una muestra de 100 personas para el entrenamiento, con un número suficiente de observaciones por predictor. Esto cumple con la recomendación de al menos 10 observaciones por variable explicativa.
+
+5. Separación perfecta:
+Se revisaron los gráficos de dispersión de las variables y no se observó separación perfecta entre las clases. Esto indica que el modelo no presenta problemas de convergencia graves por este motivo.
+
+
+```{r}
+# 6. Casos influyentes
+influencePlot(final_model)
+
+```
+
+Se utilizó la función influencePlot() para detectar observaciones con alto leverage o residuos extremos.El gráfico de influencePlot() sugiere que la observación 85 tiene un alto leverage y residual studentizado, con un Cook’s Distance cercano a 0.5, lo cual indica influencia moderada. Aunque no es extremo, conviene revisar esta observación con mayor detalle para decidir si debe mantenerse o ajustarse el modelo sin ella.
+
+
+7.-Usando código estándar, evaluar el poder predictivo de los modelos con los datos de las 50 personas que no se incluyeron en su construcción en términos de sensibilidad y especificidad.
+
+R: Para evaluar el poder predictivo del modelo final en datos no utilizados durante su construcción (50 personas del conjunto de prueba), se aplicó el modelo ajustado a estas observaciones y se calcularon métricas clave.
+
+```{r}
+
+# Predicciones sobre los datos de prueba
+prob_test <- predict(final_model, newdata = data_test, type = "response")
+
+# Curva ROC y AUC
+roc_test <- roc(data_test$EN, prob_test)
+plot(roc_test, main = "Curva ROC - Datos de Prueba")
+auc(roc_test)
+```
+
+La curva ROC generada muestra una separación clara entre clases. El área bajo la curva (AUC = 0.9536) indica que el modelo tiene una capacidad de discriminación excelente. Es decir, clasifica correctamente a personas con y sin sobrepeso en la mayoría de los casos.
+
+```{r}
+
+# Clasificación usando umbral 0.5
+pred_class <- ifelse(prob_test > 0.5, 1, 0)
+pred_class <- factor(pred_class, levels = c(0, 1))
+real_class <- factor(data_test$EN, levels = c(0, 1))
+
+# Matriz de confusión y métricas
+conf_matrix <- confusionMatrix(pred_class, real_class, positive = "1")
+conf_matrix
+
+```
+
+La matriz de confusión y métricas de desempeño muestran los siguientes resultados :
+
+- Exactitud (Accuracy): 0.88, lo que indica que el 88 % de las predicciones del modelo fueron correctas.
+
+- Sensibilidad (Recall): 0.92 ,lo que indica que el modelo identifica correctamente al 92 % de las personas con sobrepeso.
+
+- Especificidad: 0.84 , lo que indica que el modelo identifica correctamente al 84 % de las personas sin sobrepeso.
+
+- Valor predictivo positivo (PPV): 0.85 ,lo que indica que el 85 % de los clasificados como “sobrepeso” realmente lo son.
+
+- Valor predictivo negativo (NPV): 0.91 ,lo que indica que el 91 % de los clasificados como “no sobrepeso” realmente no lo son.
+
+- Kappa: 0.76 , lo cual indica un acuerdo sustancial entre predicción y verdad, ajustado por el azar.
+
+
+El modelo muestra un desempeño muy sólido en los datos de prueba, lo que confirma su validez predictiva y capacidad de generalización. No solo discrimina muy bien entre las clases (AUC > 0.95), sino que también mantiene altos niveles de sensibilidad y especificidad, sin señales de sobreajuste observables.
+
+Aunque el rendimiento es excelente, sería útil validar estos resultados en una muestra más grande o realizar validación cruzada para confirmar su estabilidad.

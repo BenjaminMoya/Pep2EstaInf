@@ -1,0 +1,460 @@
+---
+title: "Pep2"
+output: html_document
+date: "2025-06-24"
+---
+
+# Lectura 9
+
+1) EL conjunto de datos diet del paquete WRS2 contiene datos de la perdida de peso conseguida por 3 tipos de dietas. Usando bootstraping determina si la perdida de peso conseguida por las mujeres con las dietas A y C es la misma.
+
+Primero cargamos los datos
+```{r}
+# Cargamos el paquete necesario
+library(WRS2)
+library(dplyr)
+library(boot)
+library(simpleboot)
+library(ggplot2)
+library(tidyr)
+library(ggpubr)
+library(car)
+library(ez)
+
+# Cargamos los datos
+data(diet)
+
+# Filtramos por mujeres 
+data <- diet %>% filter(gender == "Female")
+
+# Filtramos por dieta A y C
+data_ac <- data %>% filter(diet.type %in% c("A", "C"))
+data_a <- data %>% filter(diet.type == "A")
+data_c <- data %>% filter(diet.type == "C")
+```
+
+Como debemos comparar la perdida de peso entre 2 grupos, podemos usar una prueba t de Student, pero primero debemos revisar la normalidad de los datos. Para esto, usaremos un grafico Q-Q.
+
+```{r}
+# Realizamos la verificacion de normalidad.
+tonos_azules = c ("steelblue","steelblue1")
+g <- ggqqplot (data_ac, x = "weight.loss", y = "diet.type",color = "diet.type" , palette = tonos_azules)
+g <- g + facet_wrap(~ diet.type)
+g <- g + rremove ("x.ticks") + rremove ("x.text")
+g <- g + rremove ("y.ticks") + rremove ("y.text")
+g <- g + rremove ("axis.title")
+print ( g )
+
+# Realizamos la prueba de normalidad de Shapiro-Wilk
+shapiro_a <- shapiro.test(data_a$weight.loss)
+shapiro_c <- shapiro.test(data_c$weight.loss)
+print(shapiro_a)
+print(shapiro_c)
+```
+
+Como vemos, para ambos grupos, el grafico q-q posee varios datos que se alejan de la region de normalidad. Asi mismo ambas prueba de Shapiro-Wilk tienen p-valor menor a 0.05, por lo que se rechaza la hipotesis nula de normalidad. Por ende debemos usar bootstraping para comparar las medias de los grupos de manera robusta.
+
+```{r}
+# Fijamos una semilla y la cantidad de remuestras
+set.seed(123)
+B <- 9999
+
+# Generamos la distribución bootstrap de la diferencia de medias
+boot_distribution <- two.boot(data_a$weight.loss, data_c$weight.loss, FUN = mean, R = B)
+
+# Armamos el dataframe
+boot_data <- data.frame(difference = boot_distribution$t)
+
+# Gráficos
+g_hist <- gghistogram(boot_data, x = "difference", bins = 100,
+                      xlab = "Diferencia de medias", ylab = "Frecuencia")
+g_qq <- ggqqplot(boot_data, x = "difference")
+
+# Combina los gráficos
+g <- ggarrange(g_hist, g_qq)
+print(g)
+```
+Luego de generada la distribucion de las diferencias de las medias, debemos armar los intervalos de confianza.
+```{r}
+# Tendencia central 
+mean_diff <- mean(boot_data$difference)
+sd_diff <- sd(boot_data$difference)
+
+# Intervalo de confianza del 95%
+alfa <- 0.05
+ci <- boot.ci(boot_distribution, conf = 1 - alfa, type = "bca")
+print(ci)
+```
+
+Como el intervalo de confianza no contiene el 0, podemos concluir que hay una diferencia significativa entre las medias de las perdidas de peso de las dietas A y C.
+
+```{r}
+# Calculamos el p valor
+null_hypothesis <- 0
+des <- mean(boot_data$difference) - null_hypothesis
+null_distribution <- boot_data$difference - des
+p_value <- (sum(abs(null_distribution))>= abs(mean(data_a$weight.loss)-mean(data_c$weight.loss)) + 1) / (B + 1)
+print(p_value)
+```
+
+Como el p-valor es menor a 0.05, podemos rechazar la hipotesis nula de igualdad de medias y concluir que hay una diferencia significativa entre las perdidas de peso de las dietas A y C.
+
+
+2) Considera el conjunto de datos essays. Determina si una de las formas de retroalimentacion estudiadas (directa o indirecta) es mejor que la otra (considere el ensayo 3 realizado al finalizar la intervencion para este analisis) utilizando permutaciones.
+
+Primero cargamos los datos
+```{r}
+# Cargamos los datos
+data(essays)
+
+# Filtramos por el ensayo 3 y por control Indirect y Direct
+essays_3 <- essays %>% 
+  filter(essay == "essay3") %>%
+  filter(group %in% c("Indirect", "Direct"))
+```
+
+Como debemos comparar la puntuacion de los ensayos entre 2 grupos, podemos usar una prueba t de Student, con hipotesis:
+Hipotesis nula: las medias de los grupos son iguales.
+Hipotesis alternativa: las medias de los grupos son diferentes.
+
+Primero debemos verificar la normalidad de los datos mediante un grafico q-q y una prueba de Shapiro-Wilk.
+```{r}
+# Realizamos la verificacion de normalidad.
+tonos_azules = c ("steelblue","steelblue1")
+g <- ggqqplot (essays_3, x = "errorRatio", y = "group",color = "group" , palette = tonos_azules)
+g <- g + facet_wrap(~ group)
+g <- g + rremove ("x.ticks") + rremove ("x.text")
+g <- g + rremove ("y.ticks") + rremove ("y.text")
+g <- g + rremove ("axis.title")
+print ( g )
+
+# Realizamos la prueba de normalidad de Shapiro-Wilk para ambos grupos
+shapiro_indirect <- shapiro.test(essays_3$errorRatio[essays_3$group == "Indirect"])
+shapiro_direct <- shapiro.test(essays_3$errorRatio[essays_3$group == "Direct"])
+print(shapiro_indirect)
+print(shapiro_direct)
+```
+
+Como vemos para el grupo indirecto, el grafico q-q posee varios datos que se alejan de la region de normalidad. Asi mismo la prueba de Shapiro-Wilk tiene p-valor menor a 0.05, por lo que se rechaza la hipotesis nula de normalidad. Por otro lado, la prueba de Shapiro-Wilk para el grupo directo tiene un p-valor mayor a 0.05, por lo que no se rechaza la hipotesis nula de normalidad, pero como tenemos un grupo que no es normal, y el grafico q-q de este mismo tiene varios datos que se alejan de la region de normalidad, debemos usar permutaciones para comparar las medias de los grupos de manera robusta.
+
+```{r}
+# Obtenemos el valor observado del estadistico t
+essay_t <- t.test(errorRatio ~ group, data = essays_3)
+obs_value_t <- essay_t$statistic
+
+# Funcion para obtener una permutacion desde en dataframe con 3 columnas
+obtiene_permutacion_largo <- function(i, df_largo) {
+  df_perm <- df_largo %>%
+    group_by(id) %>%
+    mutate(errorRatio = if (n() == 2) sample(errorRatio) else errorRatio) %>%
+    ungroup()
+  
+  return(df_perm)
+}
+# Definimos B, establecemos una semilla para las remuestras y obtenemos las permutaciones.
+B <- 2999
+set.seed(432)
+permutaciones <- lapply(1:B,obtiene_permutacion_largo ,essays_3)
+
+# Definimos la funcion que obtiene el estadistico F para cada permutacion
+obtiene_t <- function(df_largo){
+  
+  t_boot <- t.test(errorRatio ~ group, data = df_largo)
+  return (t_boot$statistic)
+}
+
+# Generamos la distribucion de F
+distribucion <- sapply (permutaciones, obtiene_t)
+
+#Obtenemos p 
+p <- (sum(distribucion > obs_value_t) + 1) / (B + 1)
+```
+
+Como vemos el p valor obtenido atraves del remuestreo del estadistico t es menor a 0.05, por lo que podemos rechazar la hipotesis nula de igualdad de medias y concluir que hay una diferencia significativa entre las puntuaciones de los ensayos entre los grupos indirecto y directo.
+
+3) Considera el conjunto de datos essays. Determina atraves de bootstrapping, si las y los estudiantes del grupo de control pudieron mejorar la tasa de errores cometidos en el tercer ensayo respecto al segundo.
+
+Primero verificamos los datos
+```{r}
+# Filtramos por el ensayo 3 y por control Indirect y Direct
+essays_control <- essays %>% 
+  filter(group == "Control") %>%
+  filter(essay %in% c("essay2", "essay3"))
+```
+
+Como debemos comparar la puntuacion de los ensayos entre 2 grupos, podemos usar una prueba t de Student, con hipotesis:
+Hipotesis nula: las medias de los grupos son iguales.
+Hipotesis alternativa: las medias de los grupos son diferentes.
+
+Primero debemos verificar la normalidad de los datos mediante un grafico q-q y una prueba de Shapiro-Wilk.
+```{r}
+# Realizamos la verificacion de normalidad.
+tonos_azules = c ("steelblue","steelblue1")
+g <- ggqqplot (essays_control, x = "errorRatio", y = "group",color = "group" , palette = tonos_azules)
+g <- g + facet_wrap(~ group)
+g <- g + rremove ("x.ticks") + rremove ("x.text")
+g <- g + rremove ("y.ticks") + rremove ("y.text")
+g <- g + rremove ("axis.title")
+print ( g )
+
+# Realizamos la prueba de normalidad de Shapiro-Wilk para ambos grupos
+shapiro_indirect <- shapiro.test(essays_control$errorRatio[essays_control$essay == "essay2"])
+shapiro_direct <- shapiro.test(essays_control$errorRatio[essays_control$essay == "essay3"])
+print(shapiro_indirect)
+print(shapiro_direct)
+```
+
+Como vemos para ambos grupos el grafico q-q posee varios datos que se alejan de la region de normalidad. Asi mismo ambas prueba de Shapiro-Wilk tienen p-valor menor a 0.05, por lo que se rechaza la hipotesis nula de normalidad. Por ende debemos usar bootstraping para comparar las medias de los grupos de manera robusta.
+
+```{r}
+# Fijamos una semilla y la cantidad de remuestras
+set.seed(123)
+B <- 9999
+
+# Generamos los datos separados por ensayo
+essay_control_2 <- essays_control %>% filter(essay == "essay2")
+essay_control_3 <- essays_control %>% filter(essay == "essay3")
+
+# Generamos la distribución bootstrap de la diferencia de medias
+boot_distribution <- two.boot(essay_control_2$errorRatio, essay_control_3$errorRatio, FUN = mean, R = B)
+
+# Armamos el dataframe
+boot_data <- data.frame(difference = boot_distribution$t)
+
+# Gráficos
+g_hist <- gghistogram(boot_data, x = "difference", bins = 100,
+                      xlab = "Diferencia de medias", ylab = "Frecuencia")
+g_qq <- ggqqplot(boot_data, x = "difference")
+
+# Combina los gráficos
+g <- ggarrange(g_hist, g_qq)
+print(g)
+```
+
+Luego de generada la distribucion de las diferencias de las medias, debemos armar los intervalos de confianza.
+```{r}
+# Tendencia central 
+mean_diff <- mean(boot_data$difference)
+sd_diff <- sd(boot_data$difference)
+
+# Intervalo de confianza del 95%
+alfa <- 0.05
+ci <- boot.ci(boot_distribution, conf = 1 - alfa, type = "bca")
+print(ci)
+```
+
+Como el intervalo de confianza contiene el 0, puede que no haya una diferencia significativa entre las medias de las perdidas de peso de los ensayos 2 y 3.
+
+```{r}
+# Calculamos el p valor
+null_hypothesis <- 0
+des <- mean(boot_data$difference) - null_hypothesis
+null_distribution <- boot_data$difference - des
+p_value <- (sum(abs(null_distribution))>= abs(mean(data_a$weight.loss)-mean(data_c$weight.loss)) + 1) / (B + 1)
+print(p_value)
+```
+
+Como el p valor de la distribucion es menor que 0.05, podemos rechazar la hipotesis nula de igualdad de medias y concluir que hay una diferencia significativa entre las puntuaciones de los ensayos 2 y 3.
+
+## Lectura 10
+
+1) Elige 2 variables numericas del conjunto de datos mtcars, distintas a las usadas como ejemplo en este capitulo, para construir un modelo de RLS y evalua su confiabilidad y calidad predictiva.
+
+Primero cargamos los datos
+```{r}
+# Cargamos los datos de la libreria
+library(carData)
+library(ggpubr)
+library(tidyr)
+library(dplyr)
+
+# Cargamos el dataset
+data(mtcars)
+```
+
+En este caso intentaremos predecir la variable qsec con la variable drat
+```{r}
+# Creamos el modelo de regresion lineal simple
+modelo <- lm(qsec ~ drat, data = mtcars)
+summary(modelo)
+```
+Segun el sumario del modelo podemos ver que el predictor drat no es significativo, ya que su p-valor es mayor a 0.05 y el R cuadrado es de 0.008 lo que indica que el modelo logra explicar solo un 0.8% de los datos.
+
+Ahora verificamos la calidad predictiva del modelo, para asegurarnos de que no estamos sobreajustando el modelo.
+
+1) Residuos aleatorios en torno a 0
+```{r}
+residualPlots(modelo)
+```
+
+Como vemos los residuos no son aleatorios, ya que siguen un notable patron. De esta manera esta condicion no se cumple.
+
+2) Autocorrelacion de los residuos
+```{r}
+durbinWatsonTest(modelo)
+```
+
+El p valor del test es mayor a 0.05 por lo que no se rechaza la hipotesis nula de que los residuos no estan autocorrelacionados. Asi esta condicion se cumple.
+
+3) Distribucion normal de los residuos
+```{r}
+marginalModelPlots(modelo, sd=TRUE,
+                   id = list(method="r", n = 3, cex = 0.7, locztion = "lr"),
+                   col = "steelblue", pch = 20, col.line = c("steelblue4","red"))
+```
+Como vemos, los residuos no siguen una distribucion normal, ya que el grafico q-q tiene varios puntos alejados de la linea de normalidad. Por lo que esta condicion no se cumple.
+
+4) Homocedasticidad de los residuos
+```{r}
+ncvTest(modelo)
+```
+Como el p valor de la prueba de homoceasticidad es mayor a 0.05, la hipotesis nula de homocedasticidad no se rechaza, por lo que esta condicion se cumple.
+
+5) Puntos influyentes
+```{r}
+influencePlot(modelo)
+```
+
+Segun los resultados no hay puntos influyentes, ya que no hay puntos que se alejen mucho de la nube de puntos.
+
+Luego de evaluar la confiabilidad, revisaremos la calidad predcitiva del modelo, para esto usaremos el metodo de validacion cruzada.
+```{r}
+# Obtenemos los conjuntos de entrenamiento y prueba
+set.seed(121)
+
+n_entrenamiento <- floor(100 * 0.8)
+i_entrenamiento <- sample.int(n = 100,size = n_entrenamiento, replace = FALSE)
+entrenamiento <- mtcars[i_entrenamiento, ]
+prueba <- mtcars[-i_entrenamiento, ]
+
+# Ajustamos el modelos con el conjunto de entrenamiento
+modelo <- lm(qsec ~ drat, data = entrenamiento)
+summary(modelo)
+
+# Calculamos el RMSE para el entrenamiento
+rmse_entrenamiento <- sqrt(mean(resid(modelo)^2))
+print(rmse_entrenamiento)
+
+# Predecimos el conjunto de prueba
+predicciones <- predict(modelo, prueba)
+
+# Calculamos el error y RMSE para el conjunto de prueba
+error <- prueba$qsec - predicciones
+rmse_prueba <- sqrt(mean(error^2))
+print(rmse_prueba)
+
+```
+Como vemos, el RMSE del conjunto de entrenamiento es de 1.24 y el del conjunto de prueba es de 1.23, lo que indica que el modelo no esta sobreajustado y tiene una buena calidad predictiva, para esta iteracion pero al no pasar varias pruebas de confiabilidad podemos concluir que el modelo no es confiable para predecir la variable qsec.
+
+
+2) Elige una variable numérica del conjunto de datos Prestige del paquete carData , toma una muestrade 100 observaciones, construye un modelo de RLS para predecir la variable de salida income y evalúa su confiabilidad y calidad predictiva usando validación cruzada simple
+
+```{r}
+library(ggpubr)
+library(tidyr)
+library(dplyr)
+library(carData)
+library(car)
+
+# Cargamos los datos
+data(Prestige)
+
+# Tomamos una muestra aleatoria de 100 observaciones
+set.seed(123)
+sample_data <- Prestige %>% 
+  sample_n(100)
+
+# Creamos el modelo de regresión lineal simple (RLS) para predecir 'income'
+model_rls <- lm(income ~ education, data = sample_data)
+summary(model_rls)
+```
+Como podemos ver el predictor 'education' es bastante significativo para predecir 'income' con un valor de p < 0.001, lo que indica que hay una relación positiva entre el nivel educativo y los ingresos, pero el ajuste de R cuadrado indica que se logra explicar un 30% de la variabilidad de los ingresos con el nivel educativo, por lo que en bondad de ajuste no es muy bueno. De igual manera evaluaremos su confiabilidad y calidad predictiva usando validación cruzada simple.
+
+Para evaluar su confiabilidad revisaremos:
+
+1) Las observaciones de la muestra son independientes: Esto si se cumple ya que la muestra fue tomada aleatoriamente.
+2) Distribucion de residuos centrada en 0: Esto se puede verificar con un gráfico de residuos.
+```{r}
+# Ocupamos el gráfico de residuos
+residualPlot(model_rls)
+```
+Como podemos observar, los residuos no estan centrados en 0, y mantienen un patron parabolico marcado, por lo que no cumplen con esta condicion.
+
+3) Autocorrelacion: Esta condición se puede verificar con el test de Durbin-Watson.
+```{r}
+# Ocupamos el test
+durbinWatsonTest(model_rls)
+```
+Como el p valor del test de Durbin Watson es mayor a 0.05, no se rechaza la hipótesis nula de que no hay autocorrelación en los residuos, por lo que esta condición se cumple.
+
+4) Distribucion normal de los residuos: Esta condicion la verificacmos mediante el grafico marginal de los residuos.
+```{r}
+marginalModelPlots(model_rls, sd=TRUE,
+                   id = list(method="r", n = 3, cex = 0.7, locztion = "lr"),
+                   col = "steelblue", pch = 20, col.line = c("steelblue4","red"))
+```
+Hay varias observaciones que se alejan tanto de la linea de tendencia como del area de confianza, por lo que no se cumple la condicion de normalidad de los residuos.
+
+5) Homocedasticidad: Esta condición se puede verificar con test NCV
+
+```{r}
+ncvTest(model_rls)
+```
+
+Como el p valor del test es menor a 0.05, esto indica la existencia de heterocedasticidad, por lo que no se cumple la condición de homocedasticidad.
+
+6) Puntos influyentes: Revisaremos si hay observaciones inlfuyentes dentro del modelo.
+```{r}
+influencePlot(model_rls)
+```
+
+Como podemos ver, hay varios puntos que se alejan de la tendencia del modelo, pero no son puntos que influyan en gran medida al modelo, debido a que la distancia de Cook se mantiene bajo el umbral de 1, por lo que esta condición se cumple.
+
+Luego de evaluar la confiabilidad, revisaremos la calidad predcitiva del modelo, para esto usaremos el metodo de validacion cruzada.
+```{r}
+# Obtenemos los conjuntos de entrenamiento y prueba
+set.seed(121)
+
+n_entrenamiento <- floor(100 * 0.8)
+i_entrenamiento <- sample.int(n = 100,size = n_entrenamiento, replace = FALSE)
+entrenamiento <- sample_data[i_entrenamiento, ]
+prueba <- sample_data[-i_entrenamiento, ]
+
+# Ajustamos el modelos con el conjunto de entrenamiento
+modelo <- lm(income ~ education, data = entrenamiento)
+summary(modelo)
+
+# Calculamos el RMSE para el entrenamiento
+rmse_entrenamiento <- sqrt(mean(resid(modelo)^2))
+print(rmse_entrenamiento)
+
+# Predecimos el conjunto de prueba
+predicciones <- predict(modelo, prueba)
+
+# Calculamos el error y RMSE para el conjunto de prueba
+error <- prueba$income - predicciones
+rmse_prueba <- sqrt(mean(error^2))
+print(rmse_prueba)
+
+```
+Vemos que los rmse son de 3600 para el conjunto de entrenaiento y 2700 para el conjunto de prueba, por lo que el modelo no esta sobreajustado y tiene una buena calidad predictiva, pero al no pasar varias pruebas de confiabilidad podemos concluir que el modelo no es confiable para predecir la variable income.
+
+3) Elige una variable numérica del conjunto de datos Prestige del paquete carData , toma una muestrade 100 observaciones, construye un modelo de RLS para predecir la variable de salida income y evalúasu confiabilidad y calidad predictiva usando validación cruzada de 4 pliegues.
+
+Ocuparemos el mismo analisis que anteriormente, pero ahora haremos la validacion cruzada con 4 pliegues.
+
+```{r}
+library(caret)
+# Obtenemos los conjuntos de entrenamiento y prueba
+set.seed(121)
+
+entrenamiento <- train(income ~ education, data = sample_data, method = "lm", trControl = trainControl(method = "cv", number = 4))
+modelo <- entrenamiento$finalModel
+summary(modelo)
+
+print(entrenamiento$resample)
+print(entrenamiento$results)
+
+```
+
+Aunque los rmse son adecuados entre los sets de entramiento y prueba, vemos que la bondad de ajuste del r cuadrado es del 0.3 por lo que se estaria explicando cerca del 30% de la variabilidad de los ingresos con el nivel educativo, por lo que el modelo no es confiable para predecir la variable income.
